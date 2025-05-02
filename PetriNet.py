@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox
 import numpy as np
 from collections import defaultdict
 from math import atan2, cos, sin
@@ -29,11 +29,11 @@ class PetriNet:
             self.transitions[source]['output'].append((target, weight))
             self.arcs.append((source, target, weight))
         else:
-            raise ValueError(f"Unknown source or target: {source} -> {target}")
+            raise ValueError(f"Неизвестный источник или цель: {source} -> {target}")
             
     def fire_transition(self, transition_name):
         if transition_name not in self.transitions:
-            raise ValueError(f"Unknown transition: {transition_name}")
+            raise ValueError(f"Неизвестная транзакция: {transition_name}")
             
         transition = self.transitions[transition_name]
         
@@ -147,38 +147,41 @@ class PetriNetVisualizer:
             self.draw_transition(x, y, transition)
     
     def draw_place(self, x, y, name, tokens):
-        self.canvas.create_oval(x-30, y-30, x+30, y+30, outline='black', width=2, fill='lightblue')
+        radius = 45
+        self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, outline='black', width=2, fill='lightblue')
         self.canvas.create_text(x, y, text=name, font=('Arial', 10))
-        self.canvas.create_text(x, y+40, text=f"Токены: {tokens}", font=('Arial', 8))
+        self.canvas.create_text(x, y+30, text=f"Токены: {tokens}", font=('Arial', 8))
         
     def draw_transition(self, x, y, name):
-        self.canvas.create_rectangle(x-30, y-15, x+30, y+15, outline='black', width=2, fill='lightgreen')
+        width = 40
+        height = 20
+        self.canvas.create_rectangle(
+            x-width, y-height, 
+            x+width, y+height, 
+            outline='black', width=2, fill='lightgreen'
+        )
         self.canvas.create_text(x, y, text=name, font=('Arial', 8))
     
     def draw_arc(self, start, end, weight):
-        # Calculate direction vector
         dx = end[0] - start[0]
         dy = end[1] - start[1]
         angle = atan2(dy, dx)
         
-        # Adjust start and end points to shapes' edges
         start_adj = (
-            start[0] + 30 * cos(angle),
-            start[1] + 30 * sin(angle)
+            start[0] + 40 * cos(angle),
+            start[1] + 40 * sin(angle) 
         )
         end_adj = (
-            end[0] - 30 * cos(angle),
-            end[1] - 30 * sin(angle)
+            end[0] - 40 * cos(angle),
+            end[1] - 40 * sin(angle)
         )
         
-        # Draw the line
         line = self.canvas.create_line(
             start_adj[0], start_adj[1], 
             end_adj[0], end_adj[1], 
             arrow=tk.LAST, width=2
         )
         
-        # Draw weight near the middle of the arc
         mid_x = (start_adj[0] + end_adj[0]) / 2
         mid_y = (start_adj[1] + end_adj[1]) / 2
         self.canvas.create_text(mid_x, mid_y, text=str(weight), font=('Arial', 8))
@@ -204,27 +207,34 @@ class PetriNetVisualizer:
         move()
     
     def add_request(self):
-        if self.petri_net.fire_transition("Send_Request"):
+        # Проверяем количество заявок в очереди
+        if self.petri_net.places["Очередь"] >= 5:
+            messagebox.showwarning(
+                "Ошибка", 
+                "В очереди больше 5 запросов, обработайте их!"
+            )
+            self.status_label.config(text="Очередь переполнена (макс. 5 заявок)")
+            return
+            
+        if self.petri_net.fire_transition("Отправить\nзапрос"):
             self.status_label.config(text="Заявка добавлена в очередь")
-            # Animate token from Users to Queue
-            start = self.petri_net.place_coords["Users"]
-            end = self.petri_net.transition_coords["Send_Request"]
+            start = self.petri_net.place_coords["Пользователи"]
+            end = self.petri_net.transition_coords["Отправить\nзапрос"]
             self.animate_token(start, end, lambda: self.animate_token(
                 end,
-                self.petri_net.place_coords["Queue"],
+                self.petri_net.place_coords["Очередь"],
                 self.draw_network
             ))
         else:
             self.status_label.config(text="Невозможно добавить заявку")
     
     def start_processing(self):
-        if self.petri_net.fire_transition("Start_Processing"):
+        if self.petri_net.fire_transition("Начать\nпроцесс"):
             self.status_label.config(text="Обработка начата")
-            # Animate tokens from Queue and Free_WS to Busy_WS
-            start_queue = self.petri_net.place_coords["Queue"]
-            start_free = self.petri_net.place_coords["Free_WS"]
-            transition = self.petri_net.transition_coords["Start_Processing"]
-            end = self.petri_net.place_coords["Busy_WS"]
+            start_queue = self.petri_net.place_coords["Очередь"]
+            start_free = self.petri_net.place_coords["Свободные\n процессы"]
+            transition = self.petri_net.transition_coords["Начать\nпроцесс"]
+            end = self.petri_net.place_coords["Система\n занята"]
             
             self.animate_token(start_queue, transition, lambda: None)
             self.animate_token(start_free, transition, lambda: 
@@ -234,12 +244,11 @@ class PetriNetVisualizer:
             self.status_label.config(text="Невозможно начать обработку (нет заявок или свободных станций)")
     
     def finish_processing(self):
-        if self.petri_net.fire_transition("Finish_Processing"):
+        if self.petri_net.fire_transition("Завершить\nпроцесс"):
             self.status_label.config(text="Обработка завершена")
-            # Animate tokens from Busy_WS to Free_WS and Processed
-            start = self.petri_net.place_coords["Busy_WS"]
-            transition = self.petri_net.transition_coords["Finish_Processing"]
-            end_free = self.petri_net.place_coords["Free_WS"]
+            start = self.petri_net.place_coords["Система\n занята"]
+            transition = self.petri_net.transition_coords["Завершить\nпроцесс"]
+            end_free = self.petri_net.place_coords["Свободные\n процессы"]
             end_processed = self.petri_net.place_coords["Processed"]
             
             self.animate_token(start, transition, lambda: (
@@ -262,13 +271,11 @@ class PetriNetVisualizer:
             text.insert(tk.END, "Матрица достижимости пуста")
             return
             
-        # Create header
         header = " " * 20
         for i in range(len(markings)):
             header += f"M{i} "
         text.insert(tk.END, header + "\n")
         
-        # Add matrix rows
         for i in range(len(markings)):
             row = f"M{i}: {markings[i]}"[:20].ljust(20)
             for j in range(len(markings)):
@@ -279,36 +286,33 @@ class PetriNetVisualizer:
 def create_workstation_model(num_workstations=5):
     net = PetriNet()
     
-    # Add places with coordinates for visualization
-    net.add_place("Users", 100, 100, 100)
-    net.add_place("Queue", 0, 300, 100)
-    net.add_place("Free_WS", num_workstations, 300, 250)
-    net.add_place("Busy_WS", 0, 500, 250)
+    net.add_place("Пользователи", 100, 100, 100)
+    net.add_place("Очередь", 0, 300, 100)
+    net.add_place("Свободные\n процессы", num_workstations, 300, 250)
+    net.add_place("Система\n занята", 0, 500, 250)
     net.add_place("Processed", 0, 500, 100)
     
-    # Add transitions with coordinates
-    net.add_transition("Send_Request", 200, 100)
-    net.add_transition("Start_Processing", 400, 175)
-    net.add_transition("Finish_Processing", 400, 325)
+    net.add_transition("Отправить\nзапрос", 200, 100)
+    net.add_transition("Начать\nпроцесс", 400, 175)
+    net.add_transition("Завершить\nпроцесс", 400, 325)
     
-    # Add arcs
-    net.add_arc("Users", "Send_Request")
-    net.add_arc("Send_Request", "Queue")
+    net.add_arc("Пользователи", "Отправить\nзапрос")
+    net.add_arc("Отправить\nзапрос", "Очередь")
     
-    net.add_arc("Queue", "Start_Processing")
-    net.add_arc("Free_WS", "Start_Processing")
-    net.add_arc("Start_Processing", "Busy_WS")
+    net.add_arc("Очередь", "Начать\nпроцесс")
+    net.add_arc("Свободные\n процессы", "Начать\nпроцесс")
+    net.add_arc("Начать\nпроцесс", "Система\n занята")
     
-    net.add_arc("Busy_WS", "Finish_Processing")
-    net.add_arc("Finish_Processing", "Free_WS")
-    net.add_arc("Finish_Processing", "Processed")
+    net.add_arc("Система\n занята", "Завершить\nпроцесс")
+    net.add_arc("Завершить\nпроцесс", "Свободные\n процессы")
+    net.add_arc("Завершить\nпроцесс", "Processed")
     
     return net
 
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("Эмулятор сети Петри - Рабочие станции")
+    root.title("Эмулятор сети Петри - Рабочие станции (макс. 5 в очереди)")
     
     net = create_workstation_model(5)
     app = PetriNetVisualizer(root, net)
