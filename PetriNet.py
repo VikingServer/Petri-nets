@@ -142,38 +142,56 @@ class PetriNetVisualizer:
             self.draw_place(x, y, place, tokens)
         
         # Draw transitions
-        for transition in self.petri_net.transitions:
+        for i, transition in enumerate(self.petri_net.transitions, 1):
             x, y = self.petri_net.transition_coords[transition]
-            self.draw_transition(x, y, transition)
+            self.draw_transition(x, y, transition, f"T{i}")
     
     def draw_place(self, x, y, name, tokens):
-        radius = 45
-        self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, outline='black', width=2, fill='lightblue')
-        self.canvas.create_text(x, y, text=name, font=('Arial', 10))
-        self.canvas.create_text(x, y+30, text=f"Токены: {tokens}", font=('Arial', 8))
+        fill_color = 'lightblue'
+        if name == "Queue":
+            if tokens >= 8:
+                fill_color = 'orange'
+            if tokens >= 10:
+                fill_color = 'red'
         
-    def draw_transition(self, x, y, name):
-        width = 40
-        height = 20
+        radius = 45
+        self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, outline='black', width=2, fill=fill_color)
+        self.canvas.create_text(x, y, text=name, font=('Arial', 10))
+        self.canvas.create_text(x, y+32, text=f"Токены: {tokens}", font=('Arial', 8))
+        
+    def draw_transition(self, x, y, name, t_label):
+        width = 20
+        height = 40
         self.canvas.create_rectangle(
             x-width, y-height, 
             x+width, y+height, 
             outline='black', width=2, fill='lightgreen'
         )
-        self.canvas.create_text(x, y, text=name, font=('Arial', 8))
+        self.canvas.create_text(x, y-10, text=t_label, font=('Arial', 10, 'bold'))
+
+        action_name = {
+            "Send_Request": "Отправить заявку",
+            "Start_Processing": "Начать обработку",
+            "Finish_Processing": "Завершить обработку"
+        }.get(name, name)
+        
+        self.canvas.create_text(x, y+height+15, text=action_name, font=('Arial', 8))
     
     def draw_arc(self, start, end, weight):
         dx = end[0] - start[0]
         dy = end[1] - start[1]
         angle = atan2(dy, dx)
         
+        place_radius = 40 if start in self.petri_net.place_coords.values() else 0
+        transition_offset = 40 if start in self.petri_net.transition_coords.values() else 0
+
         start_adj = (
-            start[0] + 40 * cos(angle),
-            start[1] + 40 * sin(angle) 
+            start[0] + place_radius * cos(angle),
+            start[1] + place_radius * sin(angle)
         )
         end_adj = (
-            end[0] - 40 * cos(angle),
-            end[1] - 40 * sin(angle)
+            end[0] - transition_offset * cos(angle),
+            end[1] - transition_offset * sin(angle)
         )
         
         line = self.canvas.create_line(
@@ -288,13 +306,13 @@ def create_workstation_model(num_workstations=5):
     
     net.add_place("Пользователи", 100, 100, 100)
     net.add_place("Очередь", 0, 300, 100)
-    net.add_place("Свободные\n процессы", num_workstations, 300, 250)
-    net.add_place("Система\n занята", 0, 500, 250)
-    net.add_place("Processed", 0, 500, 100)
+    net.add_place("Свободные\n процессы", num_workstations, 300, 300)
+    net.add_place("Система\n занята", 0, 500, 300)
+    net.add_place("Processed", 0, 300, 500)
     
     net.add_transition("Отправить\nзапрос", 200, 100)
-    net.add_transition("Начать\nпроцесс", 400, 175)
-    net.add_transition("Завершить\nпроцесс", 400, 325)
+    net.add_transition("Начать\nпроцесс", 400, 200)
+    net.add_transition("Завершить\nпроцесс", 400, 400)
     
     net.add_arc("Пользователи", "Отправить\nзапрос")
     net.add_arc("Отправить\nзапрос", "Очередь")
