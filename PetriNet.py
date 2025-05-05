@@ -1,8 +1,14 @@
 import tkinter as tk
 from tkinter import messagebox
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, deque
 from math import atan2, cos, sin
+import networkx as nx
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import networkx as nx
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 class PetriNet:
     def __init__(self):
@@ -12,7 +18,8 @@ class PetriNet:
         self.markings_history = []
         self.place_coords = {}
         self.transition_coords = {}
-        
+        self.reachability_graph = None
+
     def add_place(self, name, tokens=0, x=0, y=0):
         self.places[name] = tokens
         self.place_coords[name] = (x, y)
@@ -37,16 +44,13 @@ class PetriNet:
             
         transition = self.transitions[transition_name]
         
-        # Check if transition can fire
         can_fire = all(self.places[place] >= weight for place, weight in transition['input'])
         if not can_fire:
             return False
             
-        # Remove tokens from input places
         for place, weight in transition['input']:
             self.places[place] -= weight
             
-        # Add tokens to output places
         for place, weight in transition['output']:
             self.places[place] += weight
             
@@ -56,26 +60,75 @@ class PetriNet:
     def get_marking(self):
         return dict(self.places)
         
-    def get_reachability_matrix(self):
-        if not self.markings_history:
-            return np.array([]), []
+    def build_reachability_graph(self):
+        initial_marking = self.get_marking()
+        self.reachability_graph = {
+            'nodes': {str(initial_marking): dict(initial_marking)},
+            'edges': []
+        }
+        
+        visited = set()
+        queue = deque([(initial_marking, 0)])  # (marking, level)
+        
+        while queue and len(visited) < 50:  # Ограничение на 50 состояний
+            current, level = queue.popleft()
+            current_str = str(current)
             
-        unique_markings = []
-        for marking in self.markings_history:
-            if marking not in unique_markings:
-                unique_markings.append(marking)
+            if current_str in visited:
+                continue
                 
-        size = len(unique_markings)
+            visited.add(current_str)
+            
+            # Проверяем все возможные переходы
+            for transition in self.transitions:
+                # Сохраняем текущее состояние
+                temp_places = dict(self.places)
+                self.places = dict(current)
+                
+                # Пробуем выполнить переход
+                if self.fire_transition(transition):
+                    new_marking = self.get_marking()
+                    new_marking_str = str(new_marking)
+                    
+                    # Добавляем в граф достижимости
+                    if new_marking_str not in self.reachability_graph['nodes']:
+                        self.reachability_graph['nodes'][new_marking_str] = dict(new_marking)
+                        if len(visited) < 50:  # Проверяем ограничение
+                            queue.append((dict(new_marking), level + 1))
+                    
+                    # Добавляем ребро
+                    self.reachability_graph['edges'].append({
+                        'from': current_str,
+                        'to': new_marking_str,
+                        'transition': transition,
+                        'level': level
+                    })
+                
+                # Восстанавливаем состояние
+                self.places = dict(temp_places)
+        
+        if len(visited) >= 50:
+            print("Предупреждение: достигнуто максимальное количество состояний (50)")
+    
+    def get_reachability_matrix(self):
+        if not self.reachability_graph:
+            self.build_reachability_graph()
+            
+        nodes = list(self.reachability_graph['nodes'].keys())
+        
+        # Ограничиваем до первых 50 состояний
+        nodes = nodes[:50]
+        size = len(nodes)
         matrix = np.zeros((size, size), dtype=int)
         
-        for i in range(len(self.markings_history)-1):
-            current = self.markings_history[i]
-            next_m = self.markings_history[i+1]
-            from_idx = unique_markings.index(current)
-            to_idx = unique_markings.index(next_m)
-            matrix[from_idx][to_idx] = 1
+        # Заполняем матрицу только для первых 50 состояний
+        for edge in self.reachability_graph['edges']:
+            if edge['from'] in nodes and edge['to'] in nodes:
+                i = nodes.index(edge['from'])
+                j = nodes.index(edge['to'])
+                matrix[i][j] = 1
             
-        return matrix, unique_markings
+        return matrix, [self.reachability_graph['nodes'][node] for node in nodes]
 
 
 class PetriNetVisualizer:
@@ -343,7 +396,7 @@ class PetriNetVisualizer:
             frame, 
             wrap=tk.NONE,
             yscrollcommand=scrollbar.set,
-            font=('Courier New', 10)  # Моноширинный шрифт для выравнивания
+            font=('Courier New', 8)  # Уменьшенный шрифт для компактности
         )
         text.pack(fill=tk.BOTH, expand=True)
         scrollbar.config(command=text.yview)
@@ -362,12 +415,12 @@ class PetriNetVisualizer:
         
         # Формируем заголовок
         header = "Состояние".ljust(25)
-        for i in range(len(markings)):
+        for i in range(min(50, len(markings))):  # Ограничение до 50 столбцов
             header += f"M{i}".center(8)
-        text.insert(tk.END, header + "\n\n")
+        text.insert(tk.END, header + "\n")
         
-        # Формируем строки матрицы
-        for i in range(len(markings)):
+        # Формируем строки матрицы (не более 50)
+        for i in range(min(50, len(markings))):
             # Создаем краткое описание состояния
             marking_desc = []
             for place, tokens in markings[i].items():
@@ -376,55 +429,204 @@ class PetriNetVisualizer:
             
             row = ", ".join(marking_desc)[:25].ljust(25)
             
-            # Добавляем строку матрицы
-            for j in range(len(markings)):
+            # Добавляем строку матрицы (не более 50 значений)
+            for j in range(min(50, len(markings))):
                 row += str(matrix[i][j]).center(8)
             text.insert(tk.END, row + "\n")
         
         # Добавляем пояснения
-        text.insert(tk.END, "\n" + "-"*50 + "\n")
-        text.insert(tk.END, "Пояснения:\n")
-        text.insert(tk.END, "1. M0 - начальное состояние\n")
-        text.insert(tk.END, "2. 1 в ячейке (i,j) = переход из M_i в M_j\n")
-        text.insert(tk.END, "3. 0 = перехода нет\n\n")
-        text.insert(tk.END, "Сокращения мест:\n")
+        if len(markings) > 50:
+            text.insert(tk.END, f"\nПоказаны только первые 50 состояний из {len(markings)}\n")
+        
+        text.insert(tk.END, "\nСокращения мест:\n")
         for place, abbr in place_abbr.items():
             text.insert(tk.END, f"{abbr}: {place}\n")
 
     def show_reachability_tree(self):
-            matrix, markings = self.petri_net.get_reachability_matrix()
-            
-            if matrix.size == 0:
-                messagebox.showinfo("Информация", "Нет данных для построения дерева")
+        if not self.petri_net.reachability_graph:
+            self.petri_net.build_reachability_graph()
+        
+        graph = self.petri_net.reachability_graph
+        
+        # Ограничиваем дерево 40 вершинами
+        max_nodes = 40
+        if len(graph['nodes']) > max_nodes:
+            answer = messagebox.askyesno(
+                "Большое дерево", 
+                f"Дерево содержит {len(graph['nodes'])} состояний. Показать первые {max_nodes}?",
+                parent=self.root
+            )
+            if not answer:
                 return
+        
+        # Получаем начальную маркировку (корень дерева)
+        initial_marking = str(self.petri_net.get_marking())
+        
+        # Собираем узлы в порядке BFS (первые 40)
+        nodes = {initial_marking: graph['nodes'][initial_marking]}
+        edges = []
+        queue = deque([initial_marking])
+        visited = set([initial_marking])
+        
+        while queue and len(nodes) < max_nodes:
+            current = queue.popleft()
+            
+            for edge in graph['edges']:
+                if edge['from'] == current and edge['to'] not in visited:
+                    if len(nodes) >= max_nodes:
+                        break
+                    
+                    nodes[edge['to']] = graph['nodes'][edge['to']]
+                    edges.append(edge)
+                    visited.add(edge['to'])
+                    queue.append(edge['to'])
+        
+        tree_window = tk.Toplevel(self.root)
+        tree_window.title("Дерево достижимости (первые 40 состояний)")
+        tree_window.geometry("1200x800")
+        
+        # Создаем canvas с прокруткой
+        canvas = tk.Canvas(tree_window, bg='white', scrollregion=(0, 0, 2000, 2000))
+        vsb = tk.Scrollbar(tree_window, orient="vertical", command=canvas.yview)
+        hsb = tk.Scrollbar(tree_window, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        canvas.pack(side="left", fill="both", expand=True)
+        
+        # Параметры оформления
+        oval_width = 140
+        oval_height = 70
+        level_height = 150
+        h_padding = 60
+        
+        # Организация узлов по уровням (BFS)
+        levels = defaultdict(list)
+        node_positions = {}
+        
+        # Размещаем корневую вершину
+        levels[0] = [initial_marking]
+        node_positions[initial_marking] = (500, 50)
+        
+        # Распределяем остальные узлы по уровням
+        for edge in edges:
+            level = edge['level'] + 1
+            if edge['to'] not in levels[level]:
+                levels[level].append(edge['to'])
+        
+        # Рассчитываем позиции для каждого уровня
+        for level, node_list in sorted(levels.items()):
+            if level == 0:
+                continue  # Корень уже размещен
                 
-            tree_window = tk.Toplevel(self.root)
-            tree_window.title("Дерево достижимости")
+            node_count = len(node_list)
+            total_width = node_count * oval_width + (node_count - 1) * h_padding
+            start_x = max(20, (1000 - total_width) // 2)
             
-            # Создаем canvas с прокруткой
-            canvas = tk.Canvas(tree_window, bg='white')
-            scroll_y = tk.Scrollbar(tree_window, orient="vertical", command=canvas.yview)
-            scroll_y.pack(side="right", fill="y")
-            canvas.pack(side="left", fill="both", expand=True)
-            canvas.configure(yscrollcommand=scroll_y.set)
+            for i, node in enumerate(node_list):
+                x = start_x + i * (oval_width + h_padding)
+                y = 50 + level * level_height
+                node_positions[node] = (x, y)
+        
+        # Рисуем соединительные линии со стрелками
+        for edge in edges:
+            if edge['from'] in node_positions and edge['to'] in node_positions:
+                from_x, from_y = node_positions[edge['from']]
+                to_x, to_y = node_positions[edge['to']]
+                
+                # Корректируем координаты для плавных линий
+                from_x += oval_width // 2
+                from_y += oval_height
+                to_x += oval_width // 2
+                
+                canvas.create_line(
+                    from_x, from_y,
+                    to_x, to_y,
+                    arrow=tk.LAST, 
+                    width=1.5,
+                    fill='#555555',
+                    arrowshape=(8, 10, 5)
+                )
+                
+                # Подпись перехода
+                mid_x = (from_x + to_x) // 2
+                mid_y = (from_y + to_y) // 2
+                canvas.create_text(
+                    mid_x, mid_y - 10,
+                    text=edge['transition'],
+                    font=('Arial', 8, 'bold'),
+                    fill='#333333'
+                )
+        
+        # Рисуем овальные узлы
+        for node, (x, y) in node_positions.items():
+            marking = nodes[node]
             
-            # Фрейм для дерева
-            tree_frame = tk.Frame(canvas, bg='white')
-            canvas.create_window((0, 0), window=tree_frame, anchor="nw")
+            # Овальный узел с градиентной заливкой
+            canvas.create_oval(
+                x, y,
+                x + oval_width, y + oval_height,
+                fill='#E6F3FF',  # Светло-голубой
+                outline='#0066CC',  # Синяя граница
+                width=2
+            )
             
-            # Строим дерево
-            self._build_tree_visualization(tree_frame, matrix, markings)
-            
-            # Обновляем прокрутку
-            tree_frame.update_idletasks()
-            canvas.config(scrollregion=canvas.bbox("all"))
+            # Подпись узла
+            label = self._format_marking(marking, short=True)
+            canvas.create_text(
+                x + oval_width//2, y + oval_height//2,
+                text=label,
+                font=('Arial', 8),
+                width=oval_width-15,
+                justify='center'
+            )
+        
+        # Добавляем заголовок и информационную панель
+        canvas.create_text(
+            500, 20,
+            text="Дерево достижимости сети Петри",
+            font=('Arial', 12, 'bold'),
+            anchor='n'
+        )
+        
+        info_text = f"Всего состояний: {len(graph['nodes'])} | Показано: {len(nodes)}"
+        if len(graph['nodes']) > max_nodes:
+            info_text += f" (первые {max_nodes} по BFS)"
+        
+            canvas.create_text(
+                10, 10,
+                text=info_text,
+                font=('Arial', 9),
+                anchor='nw',
+                fill='#666666'
+            )
+        
+        # Обновляем область прокрутки
+        canvas.update_idletasks()
+        canvas.config(scrollregion=canvas.bbox("all"))
+
+    def _format_marking(self, marking, short=False):
+        place_abbr = {
+            "Заявка в очереди": "P1",
+            "Обработка заявки": "P2",
+            "Свободные процессы": "P3",
+            "Готовые заявки": "P4"
+        }
+        
+        parts = []
+        for place, tokens in marking.items():
+            if tokens > 0:
+                if short:
+                    parts.append(f"{place_abbr.get(place, place)}={tokens}")
+                else:
+                    parts.append(f"{place}={tokens}")
+        
+        if short:
+            return "\n".join(parts)
+        return ", ".join(parts)
             
     def _build_tree_visualization(self, parent_frame, matrix, markings):
-        # Создаем граф с помощью networkx
-        import networkx as nx
-        import matplotlib.pyplot as plt
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        
         G = nx.DiGraph()
         
         # Добавляем узлы и ребра
